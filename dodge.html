@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dodge the Inflation Monster - Final Edition</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: linear-gradient(to bottom, #87ceeb, #ffffff);
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    #score, #level, #timer {
+      position: absolute;
+      top: 10px;
+      background: rgba(0,0,0,0.7);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    #score { left: 10px; }
+    #level { left: 130px; }
+    #timer { right: 10px; }
+    #game-over, #mode-select {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255, 0, 0, 0.8);
+      color: white;
+      padding: 20px 30px;
+      font-size: 20px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    button {
+      margin-top: 10px;
+      padding: 8px 12px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      background: #28a745;
+      color: white;
+      border-radius: 4px;
+    }
+    button:hover {
+      background: #218838;
+    }
+    #leaderboard {
+      margin-top: 15px;
+      text-align: left;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<div id="score">Score: 0</div>
+<div id="level">Level: 1</div>
+<div id="timer">Time: 60s</div>
+
+<div id="mode-select">
+  <strong>Select Difficulty:</strong><br>
+  <button onclick="startGame('easy')">Easy Mode</button>
+  <button onclick="startGame('hard')">Hard Mode</button>
+</div>
+
+<div id="game-over" style="display:none;">
+  💀 Game Over! <br>
+  Final Score: <span id="final-score"></span><br>
+  <div id="leaderboard"></div>
+  <button onclick="restartGame()">Play Again</button>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  let player, fallingObjects, keys, score, level, gameRunning, leaderboard, shieldActive, slowMoActive, backgroundScroll, timer, difficulty;
+  const monsterLevels = [
+    ['💰', '💵'],
+    ['📈', '🔥'],
+    ['🦠', '💣'],
+    ['👹', '👺', '☠️']
+  ];
+  const powerUps = ['🛡️', '🐢'];
+
+  window.addEventListener('keydown', e => keys[e.key] = true);
+  window.addEventListener('keyup', e => keys[e.key] = false);
+
+  function startGame(mode) {
+    difficulty = mode;
+    document.getElementById('mode-select').style.display = 'none';
+    initializeGame();
+    loop();
+    startTimer();
+  }
+
+  function initializeGame() {
+    player = { x: canvas.width/2, y: canvas.height - 60, width: 40, height: 40, color: '#007bff', speed: 7 };
+    fallingObjects = [];
+    keys = {};
+    score = 0;
+    level = 1;
+    gameRunning = true;
+    shieldActive = false;
+    slowMoActive = false;
+    backgroundScroll = 0;
+    timer = 60;
+    leaderboard = leaderboard || [];
+    document.getElementById('score').innerText = 'Score: 0';
+    document.getElementById('level').innerText = 'Level: 1';
+    document.getElementById('timer').innerText = 'Time: 60s';
+    document.getElementById('game-over').style.display = 'none';
+  }
+
+  function createObject() {
+    let chance = Math.random();
+    let spawnRate = difficulty === 'easy' ? 0.015 : 0.03;
+
+    if (chance < 0.05) {
+      let emoji = powerUps[Math.floor(Math.random() * powerUps.length)];
+      fallingObjects.push({
+        x: Math.random() * (canvas.width - 40),
+        y: -40,
+        size: 40,
+        speed: 2,
+        emoji: emoji,
+        type: 'powerup'
+      });
+    } else if (chance < spawnRate + (level * 0.002) + (score/10000)) {
+      let availableMonsters = [].concat(...monsterLevels.slice(0, Math.min(level, monsterLevels.length)));
+      fallingObjects.push({
+        x: Math.random() * (canvas.width - 40),
+        y: -40,
+        size: 40,
+        speed: (difficulty === 'easy' ? 2 : 4) + Math.random() * (2 + level + score/200),
+        emoji: availableMonsters[Math.floor(Math.random() * availableMonsters.length)],
+        type: 'monster'
+      });
+    }
+  }
+
+  function drawBackground() {
+    let groundHeight = 100;
+    backgroundScroll += (1 + level * 0.3);
+    if (backgroundScroll > canvas.height) backgroundScroll = 0;
+    ctx.fillStyle = '#87ceeb';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#228B22';
+    for (let y = -groundHeight; y < canvas.height + groundHeight; y += groundHeight * 2) {
+      ctx.fillRect(0, (y + backgroundScroll) % canvas.height, canvas.width, groundHeight);
+    }
+  }
+
+  function drawPlayer() {
+    ctx.fillStyle = shieldActive ? '#FFD700' : player.color;
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+  }
+
+  function drawObjects() {
+    ctx.font = '30px Arial';
+    fallingObjects.forEach(obj => {
+      ctx.fillText(obj.emoji, obj.x, obj.y);
+    });
+  }
+
+  function movePlayer() {
+    if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+    if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += player.speed;
+  }
+
+  function updateObjects() {
+    let speedFactor = slowMoActive ? 0.4 : 1;
+    fallingObjects.forEach(obj => obj.y += obj.speed * speedFactor);
+    fallingObjects = fallingObjects.filter(obj => obj.y < canvas.height + 50);
+  }
+
+  function checkCollision() {
+    for (let obj of fallingObjects) {
+      if (
+        player.x < obj.x + obj.size &&
+        player.x + player.width > obj.x &&
+        player.y < obj.y + obj.size &&
+        player.y + player.height > obj.y
+      ) {
+        if (obj.type === 'powerup') {
+          collectPowerUp(obj.emoji);
+          obj.y = canvas.height + 100;
+        } else if (obj.type === 'monster') {
+          if (shieldActive) {
+            shieldActive = false;
+            obj.y = canvas.height + 100;
+          } else {
+            endGame();
+          }
+        }
+      }
+    }
+  }
+
+  function collectPowerUp(emoji) {
+    if (emoji === '🛡️') {
+      shieldActive = true;
+      setTimeout(() => shieldActive = false, 5000);
+    } else if (emoji === '🐢') {
+      slowMoActive = true;
+      setTimeout(() => slowMoActive = false, 5000);
+    }
+  }
+
+  function updateScore() {
+    score++;
+    document.getElementById('score').innerText = 'Score: ' + score;
+    if (score % 500 === 0) levelUp();
+  }
+
+  function levelUp() {
+    level++;
+    document.getElementById('level').innerText = 'Level: ' + level;
+  }
+
+  function updateLeaderboard() {
+    leaderboard.push(score);
+    leaderboard.sort((a, b) => b - a);
+    leaderboard = leaderboard.slice(0, 5);
+    let leaderboardHTML = '<strong>Leaderboard (Top 5):</strong><br>';
+    leaderboard.forEach((s, idx) => {
+      leaderboardHTML += `${idx + 1}. ${s}<br>`;
+    });
+    document.getElementById('leaderboard').innerHTML = leaderboardHTML;
+  }
+
+  function endGame() {
+    gameRunning = false;
+    document.getElementById('final-score').innerText = score;
+    updateLeaderboard();
+    document.getElementById('game-over').style.display = 'block';
+  }
+
+  function restartGame() {
+    document.getElementById('mode-select').style.display = 'block';
+    document.getElementById('game-over').style.display = 'none';
+  }
+
+  function startTimer() {
+    const interval = setInterval(() => {
+      if (!gameRunning) {
+        clearInterval(interval);
+        return;
+      }
+      timer--;
+      document.getElementById('timer').innerText = 'Time: ' + timer + 's';
+      if (timer <= 0) {
+        clearInterval(interval);
+        endGame();
+      }
+    }, 1000);
+  }
+
+  function loop() {
+    if (!gameRunning) return;
+    drawBackground();
+    movePlayer();
+    updateObjects();
+    drawPlayer();
+    drawObjects();
+    checkCollision();
+    updateScore();
+    createObject();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  });
+</script>
+
+</body>
+</html>
